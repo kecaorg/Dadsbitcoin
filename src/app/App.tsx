@@ -2,16 +2,27 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import monkeyBg from "../imports/C1694E09-CD0C-4C37-A0D8-5261A4A53467.png";
 
-const BTC_AMOUNT = 1.45;
+const DEFAULT_BTC_AMOUNT = Number(import.meta.env.VITE_DAD_BTC_AMOUNT ?? "1.45");
 const MOCK_BTC_PRICE = 67842;
+const BTC_AMOUNT_STORAGE_KEY = "dadsbitcoin:btcAmount";
+
+const COINGECKO_API = "https://api.coingecko.com/api/v3";
 
 type Range = "1H" | "1D" | "1W" | "1M" | "6M" | "1Y" | "ALL";
-type Metric = "myBtc" | "oneBtc" | "myValue";
+type Metric = "dadBtc" | "oneBtc" | "dadValue";
+
+interface ChartPoint {
+  date: string;
+  timestamp: number;
+  price: number;
+  value: number;
+  btc: number;
+}
 
 interface RangeConfig {
   label: string;
+  days: string;
   points: number;
-  intervalMs: number;
   tickInterval: number;
   formatDate: (d: Date) => string;
   volatility: number;
@@ -21,17 +32,17 @@ interface RangeConfig {
 const RANGE_CONFIG: Record<Range, RangeConfig> = {
   "1H": {
     label: "1 Hour",
-    points: 60,
-    intervalMs: 60 * 1000,
-    tickInterval: 9,
+    days: "1",
+    points: 12,
+    tickInterval: 1,
     formatDate: (d) => d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }),
     volatility: 0.002,
     drift: 0.0001,
   },
   "1D": {
     label: "1 Day",
+    days: "1",
     points: 48,
-    intervalMs: 30 * 60 * 1000,
     tickInterval: 7,
     formatDate: (d) => d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }),
     volatility: 0.005,
@@ -39,8 +50,8 @@ const RANGE_CONFIG: Record<Range, RangeConfig> = {
   },
   "1W": {
     label: "1 Week",
+    days: "7",
     points: 42,
-    intervalMs: 4 * 60 * 60 * 1000,
     tickInterval: 5,
     formatDate: (d) => d.toLocaleDateString("en-US", { weekday: "short", hour: "numeric" }),
     volatility: 0.012,
@@ -48,8 +59,8 @@ const RANGE_CONFIG: Record<Range, RangeConfig> = {
   },
   "1M": {
     label: "1 Month",
+    days: "30",
     points: 30,
-    intervalMs: 24 * 60 * 60 * 1000,
     tickInterval: 4,
     formatDate: (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
     volatility: 0.022,
@@ -57,8 +68,8 @@ const RANGE_CONFIG: Record<Range, RangeConfig> = {
   },
   "6M": {
     label: "6 Months",
+    days: "180",
     points: 26,
-    intervalMs: 7 * 24 * 60 * 60 * 1000,
     tickInterval: 4,
     formatDate: (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
     volatility: 0.06,
@@ -66,8 +77,8 @@ const RANGE_CONFIG: Record<Range, RangeConfig> = {
   },
   "1Y": {
     label: "1 Year",
+    days: "365",
     points: 52,
-    intervalMs: 7 * 24 * 60 * 60 * 1000,
     tickInterval: 7,
     formatDate: (d) => d.toLocaleDateString("en-US", { month: "short", year: "2-digit" }),
     volatility: 0.09,
@@ -75,47 +86,119 @@ const RANGE_CONFIG: Record<Range, RangeConfig> = {
   },
   ALL: {
     label: "All Time",
-    points: 48,
-    intervalMs: 30 * 24 * 60 * 60 * 1000,
-    tickInterval: 6,
+    days: "max",
+    points: 72,
+    tickInterval: 9,
     formatDate: (d) => d.toLocaleDateString("en-US", { month: "short", year: "numeric" }),
     volatility: 0.18,
     drift: 0.04,
   },
 };
 
-const METRIC_CONFIG: Record<Metric, { label: string; dataKey: string; color: string; isBtc: boolean }> = {
-  myBtc:   { label: "My BTC",   dataKey: "btc",   color: "#00f5d4", isBtc: true  },
-  oneBtc:  { label: "1 BTC",    dataKey: "price", color: "#f5c518", isBtc: false },
-  myValue: { label: "My Value", dataKey: "value", color: "#c084fc", isBtc: false },
+const METRIC_CONFIG: Record<Metric, { label: string; dataKey: keyof ChartPoint; color: string; isBtc: boolean }> = {
+  dadBtc: { label: "Dad's BTC", dataKey: "btc", color: "#00f5d4", isBtc: true },
+  oneBtc: { label: "1 BTC", dataKey: "price", color: "#f5c518", isBtc: false },
+  dadValue: { label: "Dad's Value", dataKey: "value", color: "#c084fc", isBtc: false },
 };
 
-function generateData(range: Range, currentPrice: number) {
+const RANGES: Range[] = ["1H", "1D", "1W", "1M", "6M", "1Y", "ALL"];
+
+function currency(value: number, maximumFractionDigits = 0) {
+  return value.toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits,
+  });
+}
+
+function loadStoredBtcAmount() {
+  const stored = window.localStorage.getItem(BTC_AMOUNT_STORAGE_KEY);
+  const parsed = stored ? Number(stored) : DEFAULT_BTC_AMOUNT;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_BTC_AMOUNT;
+}
+
+function downsample<T>(items: T[], targetLength: number) {
+  if (items.length <= targetLength) return items;
+  const step = (items.length - 1) / (targetLength - 1);
+  return Array.from({ length: targetLength }, (_, index) => items[Math.round(index * step)]);
+}
+
+function makeChartPoints(prices: Array<[number, number]>, range: Range, btcAmount: number): ChartPoint[] {
+  const cfg = RANGE_CONFIG[range];
+  const sampled = downsample(prices, cfg.points);
+  return sampled.map(([timestamp, price]) => ({
+    timestamp,
+    date: cfg.formatDate(new Date(timestamp)),
+    price: Math.round(price),
+    value: Math.round(price * btcAmount),
+    btc: btcAmount,
+  }));
+}
+
+function generateFallbackData(range: Range, currentPrice: number, btcAmount: number): ChartPoint[] {
   const cfg = RANGE_CONFIG[range];
   const now = Date.now();
-  const data = [];
+  const intervalMs = range === "ALL"
+    ? 30 * 24 * 60 * 60 * 1000
+    : range === "1Y" || range === "6M"
+      ? 7 * 24 * 60 * 60 * 1000
+      : range === "1M"
+        ? 24 * 60 * 60 * 1000
+        : range === "1W"
+          ? 4 * 60 * 60 * 1000
+          : range === "1D"
+            ? 30 * 60 * 1000
+            : 5 * 60 * 1000;
+
   let price = range === "ALL" ? currentPrice * 0.003 : currentPrice * (1 - cfg.volatility * cfg.points * 0.3);
   price = Math.max(price, 100);
 
+  const data: ChartPoint[] = [];
   for (let i = cfg.points - 1; i >= 0; i--) {
-    const ts = now - i * cfg.intervalMs;
-    const date = new Date(ts);
+    const timestamp = now - i * intervalMs;
     price = price * (1 + (Math.random() - (0.5 - cfg.drift)) * cfg.volatility);
     price = Math.max(price, 1);
     data.push({
-      date: cfg.formatDate(date),
+      timestamp,
+      date: cfg.formatDate(new Date(timestamp)),
       price: Math.round(price),
-      value: Math.round(price * BTC_AMOUNT),
-      btc: BTC_AMOUNT,
+      value: Math.round(price * btcAmount),
+      btc: btcAmount,
     });
   }
+
   data[data.length - 1].price = currentPrice;
-  data[data.length - 1].value = Math.round(currentPrice * BTC_AMOUNT);
-  data[data.length - 1].btc = BTC_AMOUNT;
+  data[data.length - 1].value = Math.round(currentPrice * btcAmount);
+  data[data.length - 1].btc = btcAmount;
   return data;
 }
 
-const RANGES: Range[] = ["1H", "1D", "1W", "1M", "6M", "1Y", "ALL"];
+async function fetchCurrentBitcoinPrice() {
+  const response = await fetch(`${COINGECKO_API}/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true`, {
+    headers: { accept: "application/json" },
+  });
+  if (!response.ok) throw new Error(`CoinGecko price request failed: ${response.status}`);
+  const json = await response.json();
+  const price = Number(json?.bitcoin?.usd);
+  const change = Number(json?.bitcoin?.usd_24h_change ?? 0);
+  if (!Number.isFinite(price)) throw new Error("CoinGecko response did not include a USD BTC price");
+  return { price: Math.round(price), change: Number(change.toFixed(2)) };
+}
+
+async function fetchBitcoinHistory(range: Range, btcAmount: number) {
+  const cfg = RANGE_CONFIG[range];
+  const response = await fetch(`${COINGECKO_API}/coins/bitcoin/market_chart?vs_currency=usd&days=${cfg.days}`, {
+    headers: { accept: "application/json" },
+  });
+  if (!response.ok) throw new Error(`CoinGecko history request failed: ${response.status}`);
+  const json = await response.json();
+  const prices = Array.isArray(json?.prices) ? json.prices : [];
+  if (!prices.length) throw new Error("CoinGecko response did not include price history");
+
+  const now = Date.now();
+  const filtered = range === "1H" ? prices.filter(([timestamp]: [number, number]) => timestamp >= now - 60 * 60 * 1000) : prices;
+  return makeChartPoints(filtered.length ? filtered : prices, range, btcAmount);
+}
 
 const dropdownStyle = (color: string): React.CSSProperties => ({
   background: "rgba(0,0,0,0.75)",
@@ -135,70 +218,125 @@ const dropdownStyle = (color: string): React.CSSProperties => ({
 });
 
 export default function App() {
+  const [btcAmount, setBtcAmount] = useState(loadStoredBtcAmount);
+  const [btcAmountInput, setBtcAmountInput] = useState(() => String(loadStoredBtcAmount()));
   const [btcPrice, setBtcPrice] = useState(MOCK_BTC_PRICE);
-  const [priceChange, setPriceChange] = useState(2.34);
+  const [priceChange, setPriceChange] = useState(0);
   const [lastUpdated, setLastUpdated] = useState(new Date());
   const [activeRange, setActiveRange] = useState<Range>("1M");
-  const [activeMetric, setActiveMetric] = useState<Metric>("myValue");
+  const [activeMetric, setActiveMetric] = useState<Metric>("dadValue");
+  const [isUsingLiveData, setIsUsingLiveData] = useState(false);
+  const [statusText, setStatusText] = useState("Loading live Bitcoin price…");
 
-  const [rangeData, setRangeData] = useState<Record<Range, ReturnType<typeof generateData>>>(() => {
-    const d = {} as Record<Range, ReturnType<typeof generateData>>;
-    RANGES.forEach((r) => { d[r] = generateData(r, MOCK_BTC_PRICE); });
-    return d;
+  const [rangeData, setRangeData] = useState<Record<Range, ChartPoint[]>>(() => {
+    const initial = {} as Record<Range, ChartPoint[]>;
+    RANGES.forEach((range) => {
+      initial[range] = generateFallbackData(range, MOCK_BTC_PRICE, btcAmount);
+    });
+    return initial;
   });
 
   const chartData = useMemo(() => rangeData[activeRange], [rangeData, activeRange]);
 
-  const refreshPrice = useCallback(() => {
-    const delta = (Math.random() - 0.49) * 200;
-    setBtcPrice((prev) => {
-      const next = Math.round(prev + delta);
+  const updateAllBtcAmounts = useCallback((amount: number) => {
+    setRangeData((old) => {
+      const updated = {} as Record<Range, ChartPoint[]>;
+      RANGES.forEach((range) => {
+        updated[range] = old[range].map((point) => ({
+          ...point,
+          btc: amount,
+          value: Math.round(point.price * amount),
+        }));
+      });
+      return updated;
+    });
+  }, []);
+
+  const refreshPrice = useCallback(async () => {
+    try {
+      const { price, change } = await fetchCurrentBitcoinPrice();
+      setBtcPrice(price);
+      setPriceChange(change);
+      setLastUpdated(new Date());
+      setIsUsingLiveData(true);
+      setStatusText("Live price from CoinGecko");
       setRangeData((old) => {
         const updated = { ...old };
-        RANGES.forEach((r) => {
-          const arr = [...old[r]];
-          arr[arr.length - 1] = { ...arr[arr.length - 1], price: next, value: Math.round(next * BTC_AMOUNT), btc: BTC_AMOUNT };
-          updated[r] = arr;
+        RANGES.forEach((range) => {
+          const arr = [...old[range]];
+          arr[arr.length - 1] = {
+            ...arr[arr.length - 1],
+            price,
+            value: Math.round(price * btcAmount),
+            btc: btcAmount,
+          };
+          updated[range] = arr;
         });
         return updated;
       });
-      const pct = ((next - MOCK_BTC_PRICE) / MOCK_BTC_PRICE) * 100;
-      setPriceChange(parseFloat(pct.toFixed(2)));
-      return next;
-    });
-    setLastUpdated(new Date());
-  }, []);
+    } catch (error) {
+      console.warn(error);
+      setIsUsingLiveData(false);
+      setStatusText("Live price temporarily unavailable · showing fallback display");
+    }
+  }, [btcAmount]);
+
+  const refreshHistory = useCallback(async (range: Range) => {
+    try {
+      const history = await fetchBitcoinHistory(range, btcAmount);
+      setRangeData((old) => ({ ...old, [range]: history }));
+      setIsUsingLiveData(true);
+      setStatusText("Live chart from CoinGecko");
+    } catch (error) {
+      console.warn(error);
+      setRangeData((old) => ({ ...old, [range]: generateFallbackData(range, btcPrice, btcAmount) }));
+      setIsUsingLiveData(false);
+      setStatusText("Live chart temporarily unavailable · showing fallback display");
+    }
+  }, [btcAmount, btcPrice]);
 
   useEffect(() => {
-    const id = setInterval(refreshPrice, 8000);
-    return () => clearInterval(id);
-  }, [refreshPrice]);
+    refreshPrice();
+    refreshHistory(activeRange);
+    const id = window.setInterval(refreshPrice, 60_000);
+    return () => window.clearInterval(id);
+  }, [activeRange, refreshHistory, refreshPrice]);
 
-  const handleRangeChange = (r: Range) => {
-    setActiveRange(r);
-    setRangeData((old) => ({ ...old, [r]: generateData(r, btcPrice) }));
+  useEffect(() => {
+    window.localStorage.setItem(BTC_AMOUNT_STORAGE_KEY, String(btcAmount));
+    updateAllBtcAmounts(btcAmount);
+  }, [btcAmount, updateAllBtcAmounts]);
+
+  const handleRangeChange = (range: Range) => {
+    setActiveRange(range);
+    refreshHistory(range);
   };
 
-  const portfolioValue = (btcPrice * BTC_AMOUNT).toLocaleString("en-US", {
-    style: "currency", currency: "USD", maximumFractionDigits: 2,
-  });
+  const handleSaveBtcAmount = () => {
+    const next = Number(btcAmountInput);
+    if (Number.isFinite(next) && next >= 0) {
+      setBtcAmount(next);
+      setStatusText("Dad's BTC amount saved on this device");
+    } else {
+      setStatusText("Enter a valid non-negative BTC amount");
+    }
+  };
 
-  const btcPriceFormatted = btcPrice.toLocaleString("en-US", {
-    style: "currency", currency: "USD", maximumFractionDigits: 0,
-  });
-
+  const portfolioValue = currency(btcPrice * btcAmount, 2);
+  const btcPriceFormatted = currency(btcPrice);
   const isPositive = priceChange >= 0;
   const mc = METRIC_CONFIG[activeMetric];
 
-  const yFormatter = (v: number) => {
-    if (mc.isBtc) return `${v} ₿`;
-    return v >= 1000 ? `$${(v / 1000).toFixed(0)}k` : `$${v}`;
+  const yFormatter = (value: number) => {
+    if (mc.isBtc) return `${value} ₿`;
+    if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}m`;
+    return value >= 1000 ? `$${(value / 1000).toFixed(0)}k` : `$${value}`;
   };
 
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (!active || !payload?.length) return null;
-    const val = payload[0]?.value;
-    const formatted = mc.isBtc ? `${val} BTC` : `$${val?.toLocaleString()}`;
+    const value = payload[0]?.value;
+    const formatted = mc.isBtc ? `${value} BTC` : currency(Number(value), 0);
     return (
       <div className="rounded-lg px-3 py-2 border" style={{ background: "rgba(0,0,0,0.85)", borderColor: mc.color, boxShadow: `0 0 12px ${mc.color}aa` }}>
         <p style={{ color: mc.color, fontSize: 12 }}>{label}</p>
@@ -213,7 +351,6 @@ export default function App() {
       <div className="fixed inset-0" style={{ background: "linear-gradient(135deg, rgba(0,0,0,0.72) 0%, rgba(10,0,30,0.80) 60%, rgba(0,0,0,0.70) 100%)" }} />
 
       <div className="relative z-10 w-full max-w-2xl flex flex-col gap-5">
-        {/* Header */}
         <div className="text-center">
           <h1
             className="tracking-widest uppercase"
@@ -221,17 +358,16 @@ export default function App() {
           >
             🎷 Dad's Bitcoin 🎷
           </h1>
-          <p style={{ color: "#00f5d4", fontSize: 13, opacity: 0.8, marginTop: 2 }}>
-            Last updated: {lastUpdated.toLocaleTimeString()}
+          <p style={{ color: "#00f5d4", fontSize: 13, opacity: 0.85, marginTop: 2 }}>
+            Last updated: {lastUpdated.toLocaleTimeString()} · {isUsingLiveData ? "Live" : "Fallback"}
           </p>
         </div>
 
-        {/* Stats row */}
         <div className="grid grid-cols-3 gap-3">
           <div className="rounded-xl p-4 flex flex-col items-center justify-center"
             style={{ background: "rgba(0,0,0,0.65)", border: "1.5px solid #00f5d4", boxShadow: "0 0 18px #00f5d466" }}>
-            <span style={{ color: "#00f5d4", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.1em" }}>My BTC</span>
-            <span style={{ color: "#ffffff", fontSize: 26, fontWeight: 800, marginTop: 4 }}>{BTC_AMOUNT} BTC</span>
+            <span style={{ color: "#00f5d4", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.1em" }}>Dad's BTC</span>
+            <span style={{ color: "#ffffff", fontSize: 26, fontWeight: 800, marginTop: 4 }}>{btcAmount.toLocaleString()} BTC</span>
           </div>
 
           <div className="rounded-xl p-4 flex flex-col items-center justify-center"
@@ -239,47 +375,46 @@ export default function App() {
             <span style={{ color: "#f5c518", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.1em" }}>1 BTC</span>
             <span style={{ color: "#ffffff", fontSize: 22, fontWeight: 800, marginTop: 4 }}>{btcPriceFormatted}</span>
             <span style={{ color: isPositive ? "#4ade80" : "#f87171", fontSize: 12, marginTop: 2, fontWeight: 600 }}>
-              {isPositive ? "▲" : "▼"} {Math.abs(priceChange)}%
+              {isPositive ? "▲" : "▼"} {Math.abs(priceChange)}% 24h
             </span>
           </div>
 
           <div className="rounded-xl p-4 flex flex-col items-center justify-center"
             style={{ background: "rgba(0,0,0,0.65)", border: "1.5px solid #c084fc", boxShadow: "0 0 18px #c084fc66" }}>
-            <span style={{ color: "#c084fc", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.1em" }}>My Value</span>
+            <span style={{ color: "#c084fc", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.1em" }}>Dad's Value</span>
             <span style={{ color: "#ffffff", fontSize: 20, fontWeight: 800, marginTop: 4 }}>{portfolioValue}</span>
           </div>
         </div>
 
-        {/* Chart */}
         <div className="rounded-xl p-5"
           style={{ background: "rgba(0,0,0,0.72)", border: "1.5px solid #00f5d455", boxShadow: "0 0 32px #00f5d422" }}>
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
             <span style={{ color: "#00f5d4", fontSize: 13, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em" }}>
               {mc.label}
             </span>
             <div className="flex items-center gap-2">
-              {/* Metric dropdown */}
               <select
+                aria-label="Chart metric"
                 value={activeMetric}
                 onChange={(e) => setActiveMetric(e.target.value as Metric)}
                 style={dropdownStyle("#c084fc")}
               >
-                {(Object.keys(METRIC_CONFIG) as Metric[]).map((m) => (
-                  <option key={m} value={m} style={{ background: "#0a0015", color: "#ffffff" }}>
-                    {METRIC_CONFIG[m].label}
+                {(Object.keys(METRIC_CONFIG) as Metric[]).map((metric) => (
+                  <option key={metric} value={metric} style={{ background: "#0a0015", color: "#ffffff" }}>
+                    {METRIC_CONFIG[metric].label}
                   </option>
                 ))}
               </select>
 
-              {/* Range dropdown */}
               <select
+                aria-label="Chart range"
                 value={activeRange}
                 onChange={(e) => handleRangeChange(e.target.value as Range)}
                 style={dropdownStyle("#00f5d4")}
               >
-                {RANGES.map((r) => (
-                  <option key={r} value={r} style={{ background: "#0a0015", color: "#ffffff" }}>
-                    {RANGE_CONFIG[r].label}
+                {RANGES.map((range) => (
+                  <option key={range} value={range} style={{ background: "#0a0015", color: "#ffffff" }}>
+                    {RANGE_CONFIG[range].label}
                   </option>
                 ))}
               </select>
@@ -327,8 +462,56 @@ export default function App() {
           </div>
         </div>
 
+        <div className="rounded-xl p-4 flex flex-col gap-3"
+          style={{ background: "rgba(0,0,0,0.62)", border: "1.5px solid #f5c51855", boxShadow: "0 0 22px #f5c51822" }}>
+          <label htmlFor="btc-amount" style={{ color: "#f5c518", fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.1em" }}>
+            Set Dad's BTC amount
+          </label>
+          <div className="flex gap-2">
+            <input
+              id="btc-amount"
+              type="number"
+              min="0"
+              step="0.00000001"
+              value={btcAmountInput}
+              onChange={(event) => setBtcAmountInput(event.target.value)}
+              style={{
+                flex: 1,
+                background: "rgba(0,0,0,0.75)",
+                border: "1.5px solid #f5c518",
+                borderRadius: 8,
+                color: "#ffffff",
+                fontSize: 14,
+                fontWeight: 700,
+                padding: "9px 12px",
+                outline: "none",
+              }}
+            />
+            <button
+              type="button"
+              onClick={handleSaveBtcAmount}
+              style={{
+                background: "#f5c518",
+                border: "none",
+                borderRadius: 8,
+                color: "#110b00",
+                cursor: "pointer",
+                fontSize: 12,
+                fontWeight: 900,
+                padding: "9px 14px",
+                textTransform: "uppercase",
+              }}
+            >
+              Save
+            </button>
+          </div>
+          <p style={{ color: "rgba(255,255,255,0.42)", fontSize: 10 }}>
+            {statusText}. Amount is saved locally in this browser; deploy-time default can be set with VITE_DAD_BTC_AMOUNT.
+          </p>
+        </div>
+
         <p className="text-center" style={{ color: "rgba(255,255,255,0.3)", fontSize: 10 }}>
-          Prices simulated for display · Updates every 8s · 🎷 Stay cool, Dad
+          Bitcoin price data from CoinGecko · Refreshes every minute · 🎷 Stay cool, Dad
         </p>
       </div>
     </div>
