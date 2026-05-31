@@ -319,7 +319,7 @@ export default function App() {
             className="tracking-widest uppercase"
             style={{ fontSize: 32, fontWeight: 900, color: "#f5c518", textShadow: "0 0 24px #f5c518, 0 0 48px #f5a50088", letterSpacing: "0.18em" }}
           >
-            🎷 Dad's Bitcoin 🎷
+            Dad's Bitcoin
           </h1>
           <p style={{ color: "#00f5d4", fontSize: 13, opacity: 0.85, marginTop: 2 }}>
             Last updated: {lastUpdated.toLocaleTimeString()} · {isUsingLiveData ? "Live" : "Fallback"}
