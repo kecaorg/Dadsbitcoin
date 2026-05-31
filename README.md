@@ -31,7 +31,7 @@ The production site is emitted to `dist/`.
 Tell Hermes the new amount, then rebuild/redeploy with:
 
 ```bash
-VITE_DAD_BTC_AMOUNT=1.45 npm run build
+VITE_DAD_BTC_AMOUNT=0.042079 npm run build
 ```
 
 There is intentionally no public BTC amount editor on the page. For now, updates happen through deploy configuration/code. A private admin page can be added later.

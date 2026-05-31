@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import monkeyBg from "../imports/C1694E09-CD0C-4C37-A0D8-5261A4A53467.png";
 
-const DEFAULT_BTC_AMOUNT = Number(import.meta.env.VITE_DAD_BTC_AMOUNT ?? "1.45");
+const DEFAULT_BTC_AMOUNT = Number(import.meta.env.VITE_DAD_BTC_AMOUNT ?? "0.042079");
 const MOCK_BTC_PRICE = 67842;
 
 const COINGECKO_API = "https://api.coingecko.com/api/v3";
