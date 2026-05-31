@@ -425,9 +425,6 @@ export default function App() {
           </div>
         </div>
 
-        <p className="text-center" style={{ color: "rgba(255,255,255,0.3)", fontSize: 10 }}>
-          Bitcoin price data from CoinGecko · Refreshes every minute · 🎷 Stay cool, Dad
-        </p>
       </div>
     </div>
   );
