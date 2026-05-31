@@ -215,7 +215,7 @@ export default function App() {
   const [btcPrice, setBtcPrice] = useState(MOCK_BTC_PRICE);
   const [priceChange, setPriceChange] = useState(0);
   const [lastUpdated, setLastUpdated] = useState(new Date());
-  const [activeRange, setActiveRange] = useState<Range>("1M");
+  const [activeRange, setActiveRange] = useState<Range>("1Y");
   const [activeMetric, setActiveMetric] = useState<Metric>("dadValue");
   const [isUsingLiveData, setIsUsingLiveData] = useState(false);
   const [statusText, setStatusText] = useState("Loading live Bitcoin price…");
