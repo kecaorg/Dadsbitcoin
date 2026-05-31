@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import monkeyBg from "../imports/C1694E09-CD0C-4C37-A0D8-5261A4A53467.png";
+import { DAD_BTC_HOLDING_EVENTS, getBtcAmountAt, getCurrentBtcAmount } from "./holdingsHistory.mjs";
 
-const DEFAULT_BTC_AMOUNT = Number(import.meta.env.VITE_DAD_BTC_AMOUNT ?? "0.042079");
 const MOCK_BTC_PRICE = 67842;
 
 const COINGECKO_API = "https://api.coingecko.com/api/v3";
@@ -116,19 +116,22 @@ function downsample<T>(items: T[], targetLength: number) {
   return Array.from({ length: targetLength }, (_, index) => items[Math.round(index * step)]);
 }
 
-function makeChartPoints(prices: Array<[number, number]>, range: Range, btcAmount: number): ChartPoint[] {
+function makeChartPoints(prices: Array<[number, number]>, range: Range): ChartPoint[] {
   const cfg = RANGE_CONFIG[range];
   const sampled = downsample(prices, cfg.points);
-  return sampled.map(([timestamp, price]) => ({
-    timestamp,
-    date: cfg.formatDate(new Date(timestamp)),
-    price: Math.round(price),
-    value: Math.round(price * btcAmount),
-    btc: btcAmount,
-  }));
+  return sampled.map(([timestamp, price]) => {
+    const btcAmount = getBtcAmountAt(DAD_BTC_HOLDING_EVENTS, timestamp);
+    return {
+      timestamp,
+      date: cfg.formatDate(new Date(timestamp)),
+      price: Math.round(price),
+      value: Math.round(price * btcAmount),
+      btc: btcAmount,
+    };
+  });
 }
 
-function generateFallbackData(range: Range, currentPrice: number, btcAmount: number): ChartPoint[] {
+function generateFallbackData(range: Range, currentPrice: number): ChartPoint[] {
   const cfg = RANGE_CONFIG[range];
   const now = Date.now();
   const intervalMs = range === "ALL"
@@ -151,6 +154,7 @@ function generateFallbackData(range: Range, currentPrice: number, btcAmount: num
     const timestamp = now - i * intervalMs;
     price = price * (1 + (Math.random() - (0.5 - cfg.drift)) * cfg.volatility);
     price = Math.max(price, 1);
+    const btcAmount = getBtcAmountAt(DAD_BTC_HOLDING_EVENTS, timestamp);
     data.push({
       timestamp,
       date: cfg.formatDate(new Date(timestamp)),
@@ -160,9 +164,10 @@ function generateFallbackData(range: Range, currentPrice: number, btcAmount: num
     });
   }
 
+  const currentBtcAmount = getCurrentBtcAmount(DAD_BTC_HOLDING_EVENTS);
   data[data.length - 1].price = currentPrice;
-  data[data.length - 1].value = Math.round(currentPrice * btcAmount);
-  data[data.length - 1].btc = btcAmount;
+  data[data.length - 1].value = Math.round(currentPrice * currentBtcAmount);
+  data[data.length - 1].btc = currentBtcAmount;
   return data;
 }
 
@@ -178,7 +183,7 @@ async function fetchCurrentBitcoinPrice() {
   return { price: Math.round(price), change: Number(change.toFixed(2)) };
 }
 
-async function fetchBitcoinHistory(range: Range, btcAmount: number) {
+async function fetchBitcoinHistory(range: Range) {
   const cfg = RANGE_CONFIG[range];
   const response = await fetch(`${COINGECKO_API}/coins/bitcoin/market_chart?vs_currency=usd&days=${cfg.days}`, {
     headers: { accept: "application/json" },
@@ -190,7 +195,7 @@ async function fetchBitcoinHistory(range: Range, btcAmount: number) {
 
   const now = Date.now();
   const filtered = range === "1H" ? prices.filter(([timestamp]: [number, number]) => timestamp >= now - 60 * 60 * 1000) : prices;
-  return makeChartPoints(filtered.length ? filtered : prices, range, btcAmount);
+  return makeChartPoints(filtered.length ? filtered : prices, range);
 }
 
 const dropdownStyle = (color: string): React.CSSProperties => ({
@@ -211,7 +216,7 @@ const dropdownStyle = (color: string): React.CSSProperties => ({
 });
 
 export default function App() {
-  const [btcAmount] = useState(DEFAULT_BTC_AMOUNT);
+  const btcAmount = getCurrentBtcAmount(DAD_BTC_HOLDING_EVENTS);
   const [btcPrice, setBtcPrice] = useState(MOCK_BTC_PRICE);
   const [priceChange, setPriceChange] = useState(0);
   const [lastUpdated, setLastUpdated] = useState(new Date());
@@ -223,7 +228,7 @@ export default function App() {
   const [rangeData, setRangeData] = useState<Record<Range, ChartPoint[]>>(() => {
     const initial = {} as Record<Range, ChartPoint[]>;
     RANGES.forEach((range) => {
-      initial[range] = generateFallbackData(range, MOCK_BTC_PRICE, btcAmount);
+      initial[range] = generateFallbackData(range, MOCK_BTC_PRICE);
     });
     return initial;
   });
@@ -246,7 +251,7 @@ export default function App() {
             ...arr[arr.length - 1],
             price,
             value: Math.round(price * btcAmount),
-            btc: btcAmount,
+            btc: getCurrentBtcAmount(DAD_BTC_HOLDING_EVENTS),
           };
           updated[range] = arr;
         });
@@ -257,21 +262,21 @@ export default function App() {
       setIsUsingLiveData(false);
       setStatusText("Live price temporarily unavailable · showing fallback display");
     }
-  }, [btcAmount]);
+  }, []);
 
   const refreshHistory = useCallback(async (range: Range) => {
     try {
-      const history = await fetchBitcoinHistory(range, btcAmount);
+      const history = await fetchBitcoinHistory(range);
       setRangeData((old) => ({ ...old, [range]: history }));
       setIsUsingLiveData(true);
       setStatusText("Live chart from CoinGecko");
     } catch (error) {
       console.warn(error);
-      setRangeData((old) => ({ ...old, [range]: generateFallbackData(range, btcPrice, btcAmount) }));
+      setRangeData((old) => ({ ...old, [range]: generateFallbackData(range, btcPrice) }));
       setIsUsingLiveData(false);
       setStatusText("Live chart temporarily unavailable · showing fallback display");
     }
-  }, [btcAmount, btcPrice]);
+  }, [btcPrice]);
 
   useEffect(() => {
     refreshPrice();
