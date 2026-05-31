@@ -4,7 +4,6 @@ import monkeyBg from "../imports/C1694E09-CD0C-4C37-A0D8-5261A4A53467.png";
 
 const DEFAULT_BTC_AMOUNT = Number(import.meta.env.VITE_DAD_BTC_AMOUNT ?? "1.45");
 const MOCK_BTC_PRICE = 67842;
-const BTC_AMOUNT_STORAGE_KEY = "dadsbitcoin:btcAmount";
 
 const COINGECKO_API = "https://api.coingecko.com/api/v3";
 
@@ -111,12 +110,6 @@ function currency(value: number, maximumFractionDigits = 0) {
   });
 }
 
-function loadStoredBtcAmount() {
-  const stored = window.localStorage.getItem(BTC_AMOUNT_STORAGE_KEY);
-  const parsed = stored ? Number(stored) : DEFAULT_BTC_AMOUNT;
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_BTC_AMOUNT;
-}
-
 function downsample<T>(items: T[], targetLength: number) {
   if (items.length <= targetLength) return items;
   const step = (items.length - 1) / (targetLength - 1);
@@ -218,8 +211,7 @@ const dropdownStyle = (color: string): React.CSSProperties => ({
 });
 
 export default function App() {
-  const [btcAmount, setBtcAmount] = useState(loadStoredBtcAmount);
-  const [btcAmountInput, setBtcAmountInput] = useState(() => String(loadStoredBtcAmount()));
+  const [btcAmount] = useState(DEFAULT_BTC_AMOUNT);
   const [btcPrice, setBtcPrice] = useState(MOCK_BTC_PRICE);
   const [priceChange, setPriceChange] = useState(0);
   const [lastUpdated, setLastUpdated] = useState(new Date());
@@ -237,20 +229,6 @@ export default function App() {
   });
 
   const chartData = useMemo(() => rangeData[activeRange], [rangeData, activeRange]);
-
-  const updateAllBtcAmounts = useCallback((amount: number) => {
-    setRangeData((old) => {
-      const updated = {} as Record<Range, ChartPoint[]>;
-      RANGES.forEach((range) => {
-        updated[range] = old[range].map((point) => ({
-          ...point,
-          btc: amount,
-          value: Math.round(point.price * amount),
-        }));
-      });
-      return updated;
-    });
-  }, []);
 
   const refreshPrice = useCallback(async () => {
     try {
@@ -302,24 +280,9 @@ export default function App() {
     return () => window.clearInterval(id);
   }, [activeRange, refreshHistory, refreshPrice]);
 
-  useEffect(() => {
-    window.localStorage.setItem(BTC_AMOUNT_STORAGE_KEY, String(btcAmount));
-    updateAllBtcAmounts(btcAmount);
-  }, [btcAmount, updateAllBtcAmounts]);
-
   const handleRangeChange = (range: Range) => {
     setActiveRange(range);
     refreshHistory(range);
-  };
-
-  const handleSaveBtcAmount = () => {
-    const next = Number(btcAmountInput);
-    if (Number.isFinite(next) && next >= 0) {
-      setBtcAmount(next);
-      setStatusText("Dad's BTC amount saved on this device");
-    } else {
-      setStatusText("Enter a valid non-negative BTC amount");
-    }
   };
 
   const portfolioValue = currency(btcPrice * btcAmount, 2);
@@ -460,54 +423,6 @@ export default function App() {
           <div className="flex justify-center mt-2">
             <span style={{ color: mc.color, fontSize: 11 }}>● {mc.label}</span>
           </div>
-        </div>
-
-        <div className="rounded-xl p-4 flex flex-col gap-3"
-          style={{ background: "rgba(0,0,0,0.62)", border: "1.5px solid #f5c51855", boxShadow: "0 0 22px #f5c51822" }}>
-          <label htmlFor="btc-amount" style={{ color: "#f5c518", fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.1em" }}>
-            Set Dad's BTC amount
-          </label>
-          <div className="flex gap-2">
-            <input
-              id="btc-amount"
-              type="number"
-              min="0"
-              step="0.00000001"
-              value={btcAmountInput}
-              onChange={(event) => setBtcAmountInput(event.target.value)}
-              style={{
-                flex: 1,
-                background: "rgba(0,0,0,0.75)",
-                border: "1.5px solid #f5c518",
-                borderRadius: 8,
-                color: "#ffffff",
-                fontSize: 14,
-                fontWeight: 700,
-                padding: "9px 12px",
-                outline: "none",
-              }}
-            />
-            <button
-              type="button"
-              onClick={handleSaveBtcAmount}
-              style={{
-                background: "#f5c518",
-                border: "none",
-                borderRadius: 8,
-                color: "#110b00",
-                cursor: "pointer",
-                fontSize: 12,
-                fontWeight: 900,
-                padding: "9px 14px",
-                textTransform: "uppercase",
-              }}
-            >
-              Save
-            </button>
-          </div>
-          <p style={{ color: "rgba(255,255,255,0.42)", fontSize: 10 }}>
-            {statusText}. Amount is saved locally in this browser; deploy-time default can be set with VITE_DAD_BTC_AMOUNT.
-          </p>
         </div>
 
         <p className="text-center" style={{ color: "rgba(255,255,255,0.3)", fontSize: 10 }}>
