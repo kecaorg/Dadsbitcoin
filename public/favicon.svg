@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Dad's Bitcoin favicon">
+  <defs>
+    <radialGradient id="bg" cx="35%" cy="25%" r="85%">
+      <stop offset="0%" stop-color="#24103f"/>
+      <stop offset="48%" stop-color="#090019"/>
+      <stop offset="100%" stop-color="#020006"/>
+    </radialGradient>
+    <linearGradient id="coin" x1="120" y1="90" x2="390" y2="420" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#fff1a6"/>
+      <stop offset="45%" stop-color="#f5c518"/>
+      <stop offset="100%" stop-color="#b86b00"/>
+    </linearGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="16" result="blur"/>
+      <feColorMatrix in="blur" type="matrix" values="0 0 0 0 0.00 0 0 0 0 0.96 0 0 0 0 0.83 0 0 0 .85 0" result="cyan"/>
+      <feMerge><feMergeNode in="cyan"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <path d="M84 386 C148 334 211 381 270 326 C329 271 361 294 428 250" fill="none" stroke="#c084fc" stroke-width="20" stroke-linecap="round" opacity=".45"/>
+  <path d="M70 142 C136 189 190 129 250 174 C306 216 354 175 442 117" fill="none" stroke="#00f5d4" stroke-width="18" stroke-linecap="round" opacity=".55"/>
+  <circle cx="256" cy="256" r="154" fill="none" stroke="#00f5d4" stroke-width="18" opacity=".92" filter="url(#glow)"/>
+  <circle cx="256" cy="256" r="124" fill="url(#coin)" stroke="#fff0a6" stroke-width="10"/>
+  <circle cx="256" cy="256" r="92" fill="none" stroke="#8c4d00" stroke-width="7" opacity=".5"/>
+  <rect x="216" y="148" width="16" height="216" rx="6" fill="#fff4b8"/>
+  <rect x="238" y="148" width="16" height="216" rx="6" fill="#fff4b8"/>
+  <text x="268" y="320" text-anchor="middle" font-family="Arial Black, Arial, sans-serif" font-size="172" font-weight="900" fill="#190707" stroke="#fff4b8" stroke-width="5">B</text>
+</svg>
